@@ -515,6 +515,28 @@ def test_interface_reap():
     assert A.name == "__DELETED__"
 
 
+@pytest.mark.parametrize('shp', ((15,), (10, 10), (3, 3, 3)))
+def test_sparse_to_dense(shp):
+    x = sdb.random(shp)
+    expected = x.toarray()
+    expected[expected <= 0.5] = 0
+
+    actual = sdb.afl.filter(x, 'f0 > 0.5').toarray()
+    np.testing.assert_allclose(expected, actual)
+
+
+@pytest.mark.parametrize('shp', ((15,), (10, 10), (3, 3, 3)))
+def test_sparse_to_dense_multiatt(shp):
+    x = sdb.random(shp)
+    y = sdb.afl.apply(x, 'f1', 'f0 + 1').eval()
+    expected = y.toarray()
+    expected[expected['f0'] <= 0.5] = (0, 0)
+
+    actual = sdb.afl.filter(y, 'f0 > 0.5').toarray()
+    np.testing.assert_allclose(expected['f0'], actual['f0'])
+    np.testing.assert_allclose(expected['f1'], actual['f1'])
+
+
 def test_interface_reap_after_manual_reap_is_silent():
 
     A = sdb.random((1, 1))

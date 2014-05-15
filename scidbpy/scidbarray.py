@@ -491,6 +491,10 @@ class SciDBArray(object):
         return self.datashape.dim_names
 
     @property
+    def att_names(self):
+        return self.sdbtype.names
+
+    @property
     def ndim(self):
         return len(self.datashape.shape)
 
@@ -683,13 +687,16 @@ class SciDBArray(object):
                         arr[name] = bytes_arr[name]
 
             if output == 'dense':
-                if self.ndim != 2:
-                    raise NotImplementedError("sparse to dense for ndim != 2")
-                from scipy import sparse
-                data = arr[full_dtype.names[2]]
-                ij = (arr[full_dtype.names[0]], arr[full_dtype.names[1]])
-                arr_coo = sparse.coo_matrix((data, ij), shape=self.shape)
-                arr = arr_coo.toarray()
+                result = np.zeros(self.shape, self.dtype)
+                coords = tuple([arr[d] for d in self.dim_names])
+
+                if len(self.att_names) == 1:
+                    result[coords] = arr[self.att_names[0]]
+                    return result
+
+                for att in self.att_names:
+                    result[att][coords] = arr[att]
+                return result
 
         else:
             if transfer_bytes:
