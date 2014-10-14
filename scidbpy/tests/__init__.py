@@ -31,6 +31,7 @@ by standard factory methods like sdb.zeros()
 This tests that SciDBPy functions are robust to details about chunks
 """
 
+unfuzzed = {}
 
 def chunk_fuzz(func):
 
@@ -49,6 +50,7 @@ def chunk_fuzz(func):
 
 for fac in ('zeros ones random from_array from_sparse from_dataframe '
             'identity linspace arange random randint').split():
+    unfuzzed[fac] = getattr(sdb, fac)
     setattr(sdb, fac, chunk_fuzz(getattr(sdb, fac)))
 
 

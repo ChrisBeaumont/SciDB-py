@@ -21,6 +21,7 @@ import atexit
 import logging
 import csv
 from time import time
+from itertools import product
 from fnmatch import fnmatch
 
 import requests
@@ -61,17 +62,38 @@ def _af(arr, ind):
     return "{{a.a{i}f}}".format(i=ind).format(a=arr)
 
 
-def _to_bytes(arr):
+def _scidb_serialize(arr, chunk_size):
+    """
+    Serialize a multidimensional numpy array into a 1D array,
+    with an interleaving scheme that matches SciDB.
+
+    Such a scheme first interleaves chunks in C-contiguous order.
+    Then it interleaves cells in the chunk in C-contiguous order.
+    """
+    chunk_size = as_list(chunk_size)
+    if len(chunk_size) == 1:
+        chunk_size = chunk_size * arr.ndim
+    result = []
+    for start in product(*(range(0, s, c)
+                           for s, c in zip(arr.shape, chunk_size))):
+        slices = tuple(slice(i, i + s)
+                       for i, s in zip(start, chunk_size))
+        result.append(arr[slices].ravel())
+    return np.hstack(result)
+
+
+def _to_bytes(arr, chunk_size=1000):
     """
     Convert a numpy array to a bytestring in SciDB's binary format
     """
-    # very inefficient like this.
+    arr = _scidb_serialize(arr, chunk_size)
 
     # easy case: no strings, SciDB format matches numpy format
     if not any(np.issubdtype(t, np.character) for l, t in arr.dtype.descr):
         return arr.tostring(order='C')
 
     # some attributes are strings
+    # very inefficient like this.
     result = []
     for item in arr.ravel():
         for datum in iter_record(item):
@@ -824,7 +846,7 @@ class SciDBInterface(object):
                 ret.append(gesvd(A, "'%s'" % output))
         return tuple(ret)
 
-    def from_array(self, A, instance_id=0, **kwargs):
+    def from_array(self, A, instance_id=0, chunk_size=1000, **kwargs):
         """Initialize a scidb array from a numpy array
 
         Parameters
@@ -834,6 +856,8 @@ class SciDBInterface(object):
         instance_id : integer
             the instance ID used in loading
             (default=0; see SciDB documentation)
+        chunk_size : integer or list of integers
+            The chunk size of the uploaded SciDBArray. Default=1000
         **kwargs :
             Additional keyword arguments are passed to new_array()
 
@@ -842,22 +866,21 @@ class SciDBInterface(object):
         arr : SciDBArray
             SciDB Array object built from the input array
         """
+        if 'chunk_overlap' in kwargs:
+            raise ValueError("chunk_overlap not supported by from_array. "
+                             "Use schema_utils.rechunk instead")
         q = self.afl.quote
         A = np.asarray(A)
         instance_id = int(instance_id)
-        filename, session_id = self._upload_bytes(_to_bytes(A))
+
+        filename, session_id = self._upload_bytes(_to_bytes(A, chunk_size=chunk_size))
         filename = q(filename)
 
-        # the array gets scrambled if spread across >1 chunk
-        # follow SciDBR and size array to 1 chunk
-        if 'chunk_size' in kwargs:
-            warnings.warn("Ignoring chunk_size. Use redimension instead")
-        kwargs['chunk_size'] = A.shape
-
-        arr = self.new_array(A.shape, A.dtype, **kwargs)
+        arr = self.new_array(A.shape, A.dtype, chunk_size=chunk_size, **kwargs)
         self.afl.load(arr, filename, instance_id,
                       q(arr.sdbtype.bytes_fmt)).eval(store=False)
         self._release_session(session_id)
+
         return arr
 
     def from_dataframe(self, A, instance_id=0, **kwargs):
